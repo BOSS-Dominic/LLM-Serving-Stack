@@ -1,0 +1,71 @@
+groups:
+  - name: llm-serving
+    rules:
+      # ------------------------- engine layer ------------------------- #
+      - alert: VLLMBackendDown
+        expr: up{job="vllm"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "vLLM instance {{ $labels.instance }} is down"
+          description: "The engine has not answered /metrics for 30s. The gateway will remove it from rotation, but capacity has dropped."
+
+      - alert: HighTTFTp95
+        expr: histogram_quantile(0.95, sum by (le) (rate(vllm:time_to_first_token_seconds_bucket[5m]))) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TTFT p95 above 5s"
+          description: "Prefill or queueing is the bottleneck. Check num_requests_waiting and KV cache usage before adding replicas."
+
+      - alert: QueueBacklog
+        expr: sum(vllm:num_requests_waiting) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} requests waiting in the vLLM scheduler"
+          description: "The batch is saturated. Throughput may still be rising, but latency SLO is at risk."
+
+      - alert: KVCacheNearlyFull
+        expr: max(vllm:gpu_cache_usage_perc) > 0.95
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KV cache above 95% on {{ $labels.instance }}"
+          description: "New requests will be preempted or queued. Lower --max-num-seqs or --max-model-len, or add replicas."
+
+      # ------------------------- gateway layer ------------------------ #
+      - alert: GatewayNoHealthyBackends
+        expr: max(gateway_backend_healthy) == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway has zero healthy backends"
+          description: "Every /v1 request is returning 503 right now."
+
+      - alert: GatewayErrorRatioHigh
+        expr: |
+          sum(rate(gateway_requests_total{code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(gateway_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of gateway responses are 5xx"
+          description: "Check whether a backend is failing or whether retries are exhausting."
+
+      - alert: GatewayRetryStorm
+        expr: sum(rate(gateway_retries_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Retries sustained above 1/s"
+          description: "A backend is probably flapping. Retries hide the failure from users but not from capacity."

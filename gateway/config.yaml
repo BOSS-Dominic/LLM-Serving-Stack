@@ -1,0 +1,53 @@
+# Gateway configuration.
+#
+# Every duration is a Go duration string ("250ms", "30s", "2m").
+# Reloading requires a restart; health state is re-established by the first
+# probe pass a few hundred milliseconds after start.
+
+listen: ":9000"
+
+# round_robin | least_conn
+# least_conn is the default because generation length varies enormously between
+# requests, so "same number of requests" does not mean "same amount of work".
+strategy: least_conn
+
+log_level: info
+
+backends:
+  - name: vllm-1
+    url: http://127.0.0.1:8000
+    weight: 1
+  - name: vllm-2
+    url: http://127.0.0.1:8001
+    weight: 1
+
+health_check:
+  interval: 10s
+  # /health flips to 200 only once weights are loaded and the engine is ready,
+  # which is exactly the semantic we want for "in rotation".
+  path: /health
+  timeout: 2s
+  # Consecutive results required before a state change (avoids flapping).
+  unhealthy_after: 2
+  healthy_after: 2
+
+timeouts:
+  connect: 5s
+  # Applies to non-streaming requests only.
+  request: 60s
+  # Streaming requests get a first-byte deadline instead of a total deadline.
+  stream_first_byte: 30s
+  shutdown: 15s
+
+retry:
+  # Retries happen only before the first byte reaches the client.
+  max: 2
+  backoff: 100ms
+  max_backoff: 1s
+  max_body_bytes: 8388608        # 8 MiB request cap
+  max_response_body_bytes: 4194304 # 4 MiB buffer cap for non-streaming bodies
+
+# Global token bucket in front of the pool; 0 disables it.
+rate_limit:
+  rps: 0
+  burst: 0

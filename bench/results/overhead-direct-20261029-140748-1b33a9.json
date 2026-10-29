@@ -1,0 +1,138 @@
+{
+  "label": "overhead-direct",
+  "base_url": "http://127.0.0.1:18003/v1",
+  "model": "mock-qwen",
+  "started_at": "2026-10-29T14:07:14.488157+00:00",
+  "finished_at": "2026-10-29T14:07:48.378074+00:00",
+  "environment": {
+    "models_endpoint": {
+      "object": "list",
+      "data": [
+        {
+          "id": "mock-qwen",
+          "object": "model",
+          "owned_by": "mock"
+        }
+      ]
+    },
+    "python": "3.10.11",
+    "platform": "Windows-10-10.0.26300-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "client_host": "<redacted>",
+    "same_host_as_server": false,
+    "openai_client": "2.29.0"
+  },
+  "config": {
+    "concurrency": "1,4,8",
+    "num_requests": 40,
+    "max_tokens": 32,
+    "prompt_chars": 400,
+    "temperature": 0.0,
+    "stream": true,
+    "warmup": 3,
+    "cooldown_s": 1.0,
+    "timeout_s": 300.0,
+    "same_host": false
+  },
+  "levels": [
+    {
+      "concurrency": 1,
+      "num_requests": 40,
+      "wall_seconds": 20.8662,
+      "completed": 40,
+      "errors": 0,
+      "error_rate": 0.0,
+      "qps": 1.917,
+      "output_tokens_per_second": 61.3433,
+      "total_tokens_per_second": 446.6559,
+      "ttft": {
+        "p50": 0.0292,
+        "p95": 0.0304,
+        "p99": 0.0306,
+        "mean": 0.0238
+      },
+      "tpot": {
+        "p50": 0.0161,
+        "p95": 0.0161,
+        "p99": 0.0161,
+        "mean": 0.0161
+      },
+      "e2e": {
+        "p50": 0.526,
+        "p95": 0.5288,
+        "p99": 0.5299,
+        "mean": 0.5215
+      },
+      "prompt_tokens_mean": 201.0,
+      "completion_tokens_mean": 32.0,
+      "tokens_estimated": false,
+      "sample_error": null
+    },
+    {
+      "concurrency": 4,
+      "num_requests": 40,
+      "wall_seconds": 5.294,
+      "completed": 40,
+      "errors": 0,
+      "error_rate": 0.0,
+      "qps": 7.5558,
+      "output_tokens_per_second": 241.785,
+      "total_tokens_per_second": 1760.4968,
+      "ttft": {
+        "p50": 0.0293,
+        "p95": 0.0361,
+        "p99": 0.0383,
+        "mean": 0.0284
+      },
+      "tpot": {
+        "p50": 0.0161,
+        "p95": 0.0162,
+        "p99": 0.0163,
+        "mean": 0.0161
+      },
+      "e2e": {
+        "p50": 0.5272,
+        "p95": 0.5337,
+        "p99": 0.5362,
+        "mean": 0.5273
+      },
+      "prompt_tokens_mean": 201.0,
+      "completion_tokens_mean": 32.0,
+      "tokens_estimated": false,
+      "sample_error": null
+    },
+    {
+      "concurrency": 8,
+      "num_requests": 40,
+      "wall_seconds": 2.7465,
+      "completed": 40,
+      "errors": 0,
+      "error_rate": 0.0,
+      "qps": 14.5638,
+      "output_tokens_per_second": 466.0423,
+      "total_tokens_per_second": 3393.3701,
+      "ttft": {
+        "p50": 0.0397,
+        "p95": 0.0482,
+        "p99": 0.0499,
+        "mean": 0.0391
+      },
+      "tpot": {
+        "p50": 0.0162,
+        "p95": 0.0165,
+        "p99": 0.0165,
+        "mean": 0.0162
+      },
+      "e2e": {
+        "p50": 0.5407,
+        "p95": 0.5572,
+        "p99": 0.5596,
+        "mean": 0.5421
+      },
+      "prompt_tokens_mean": 201.0,
+      "completion_tokens_mean": 32.0,
+      "tokens_estimated": false,
+      "sample_error": null
+    }
+  ]
+}

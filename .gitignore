@@ -1,0 +1,25 @@
+# Build artifacts. Note: a bare "gateway" pattern would match the gateway/
+# source directory too, so binaries are matched by path explicitly.
+gateway/gateway
+gateway/gateway.exe
+*.exe
+*.test
+*.out
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+.env
+deploy/.env
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Benchmark raw results are committed deliberately (they are the evidence for
+# the report), but the large per-request CSVs are not.
+bench/results/*.csv

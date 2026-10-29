@@ -1,0 +1,6 @@
+.git
+.gitignore
+*.exe
+gateway
+Dockerfile
+*.md

@@ -1,0 +1,144 @@
+name: llm-serving-stack
+
+# Two ways to run this stack:
+#
+#   1. Real GPU (needs an NVIDIA GPU + nvidia-container-toolkit):
+#        docker compose --profile gpu up -d
+#
+#   2. No GPU (mock engine, useful for screenshots and CI):
+#        BACKENDS=mock-1=http://mock-vllm:18000 docker compose --profile mock up -d
+#
+# The gateway is deliberately NOT `depends_on: vllm`. Model loading takes
+# minutes; the gateway is designed to start immediately, probe, and report
+# "not ready" until a backend actually answers. That is the behaviour we want
+# to demo, not something to paper over with an orchestration dependency.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    profiles: ["gpu"]
+    command:
+      - --model
+      - ${MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - --served-model-name
+      - ${SERVED_MODEL_NAME:-qwen}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - auto
+      - --gpu-memory-utilization
+      - ${GPU_MEMORY_UTILIZATION:-0.9}
+      - --max-model-len
+      - ${MAX_MODEL_LEN:-4096}
+      - --max-num-seqs
+      - ${MAX_NUM_SEQS:-64}
+      - --disable-log-requests
+    environment:
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # vLLM writes a lot of compile/capture output; keep the log readable.
+      VLLM_LOGGING_LEVEL: ${VLLM_LOGGING_LEVEL:-INFO}
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    shm_size: "16gb"
+    ipc: host
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    logging: *default-logging
+    restart: unless-stopped
+
+  mock-vllm:
+    image: ${PYTHON_IMAGE:-python:3.11-slim}
+    profiles: ["mock"]
+    working_dir: /app
+    command: ["python", "mock_vllm.py", "--host", "0.0.0.0", "--port", "18000", "--prefill-ms", "40", "--token-ms", "5", "--model", "mock-qwen"]
+    volumes:
+      - ../bench:/app:ro
+    ports:
+      - "${MOCK_VLLM_PORT:-18000}:18000"
+    logging: *default-logging
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ../gateway
+      args:
+        VERSION: ${GATEWAY_VERSION:-dev}
+    image: ${GATEWAY_IMAGE:-llm-serving-gateway:dev}
+    environment:
+      GATEWAY_LISTEN: ":9000"
+      # Override the backends from config.yaml without rebuilding the image.
+      GATEWAY_BACKENDS: ${BACKENDS:-vllm-1=http://vllm:8000}
+    volumes:
+      - ../gateway/config.yaml:/etc/gateway/config.yaml:ro
+    ports:
+      - "${GATEWAY_PORT:-9000}:9000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    logging: *default-logging
+    restart: unless-stopped
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.3.0}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/llm-serving.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    logging: *default-logging
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
+  prometheus-data:
+  grafana-data:
