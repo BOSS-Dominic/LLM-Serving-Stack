@@ -331,6 +331,66 @@ mock 的数字只能证明工具链正确，**不能**写进简历当模型性�
 
 ---
 
+### B7. 压测前必须确认 GPU 独占（真实踩坑）
+
+**现象**：第一次完整扫描的吞吐只有后来干净环境的约一半（C=1 57.9 vs 114.6 tok/s），
+并且出现"16→32 并发吞吐翻倍、TPOT 反而下降"的反常曲线。
+
+**原因**：后台在跑游戏，和 vLLM 分时占用 GPU。GPU 时间被抢走时，decode 的每 token 间隔变长，
+排队又放大了尾部延迟，表现为吞吐腰斩、延迟曲线不单调。
+
+**选择**：
+- 压测前用 `nvidia-smi` 确认 GPU 利用率回到 0%、没有游戏/渲染进程、显存占用稳定；
+- 每档独立跑 3 次，**取中位数**（`bench/aggregate.py`），报告同时给出 min/median/max；
+- 被污染的一批数据整批丢弃，不参与聚合。
+
+**代价**：3 次重复让压测时间变成 3 倍（本机每轮约 80 秒，可接受）。
+
+**证据**：`docs/benchmark-report.md` §4.3 的重复性表；干净环境三次的 tok/s 波动 5–20%，
+被游戏污染的 run 与干净 run 相差约 2 倍。
+
+---
+
+### B8. 镜像没有 nvcc 时，关掉 FlashInfer 采样器
+
+**现象**：vLLM 0.31 启动到 engine init 时失败，日志是 FlashInfer 采样 kernel 的
+Ninja JIT 编译报错：`/bin/sh: 1: /usr/local/cuda/bin/nvcc: not found`。
+本地 GPU 镜像只装了 CUDA runtime，没有编译器。
+
+**选择**：`VLLM_USE_FLASHINFER_SAMPLER=0`，退回 vLLM 原生采样器。
+
+**放弃的方案**：
+- 安装完整 CUDA Toolkit：为了几个 sampling kernel 多装几个 GB，且镜像不由本项目维护；
+- 换镜像：`docker pull` 在当前网络下不可用（见 B9）。
+
+**代价**：采样不是 decode 的瓶颈，对吞吐影响很小；但这是明确的环境差异，
+报告必须记录，避免别人复现时得到不同数字。
+
+**证据**：`docs/benchmark-report.md` §1.1 / §4.2 的启动参数。
+
+---
+
+### B9. 版本漂移与镜像获取：把"怎么跑起来的"写进报告
+
+**两件事**：
+
+1. vLLM 0.31 移除了 `--disable-log-requests`，改成 `--no-enable-log-requests`
+   （`--disable-log-stats` 仍可用）。照抄旧教程会直接启动失败。
+2. Docker daemon 直连 Docker Hub 被网络阻断，配置的 4 个镜像加速器在 manifest 阶段
+   返回 `unavailable`；而容器内网络可以访问 PyPI/ModelScope。最终路径是
+   **本地已有镜像 + 容器内 pip 安装 vLLM + ModelScope 下载模型**，完全绕开 `docker pull`。
+
+**选择**：把 vLLM / torch / CUDA / 驱动版本、完整启动参数、模型来源写进报告 §1.1 与 §4.2；
+镜像与模型不写 "latest"。
+
+**代价**：受网络限制，仓库没有提供可直接 `docker compose up` 的 vLLM 镜像路径，
+但 `deploy/docker-compose.yml` 已通过 `docker compose config` 校验，网络正常的机器可直接用。
+
+**教训**：性能数字的可复现性 = 代码 + 数据 + **环境三元组（版本 / 参数 / 硬件）**。
+缺任何一项，面试官问"这个数字怎么来的"就答不完整。
+
+---
+
 ## C. 可观测性
 
 ### C1. Prometheus 拉模式，而不是应用推

@@ -10,42 +10,54 @@
 
 | 内容 | 状态 | 位置 |
 |---|---|---|
-| 压测工具链（闭环保压、TTFT/TPOT/P99、容量基线推导） | ✅ 已实现并验证 | `bench/bench_pro.py`、`bench/summarize.py` |
+| 压测工具链（闭环保压、TTFT/TPOT/P99、容量基线推导） | ✅ 已实现并验证 | `bench/bench_pro.py`、`bench/summarize.py`、`bench/aggregate.py` |
 | 网关端到端（2 后端、故障摘除、指标） | ✅ 已实测 | 本文件 §3 |
 | 网关引入的额外延迟（同后端 direct vs proxied） | ✅ 已实测 | 本文件 §3.2 |
-| 真实 vLLM 引擎压测（并发 1/4/16/32） | ⏳ **待实测** | 本文件 §4 |
-| vLLM vs HuggingFace 基线 | ⏳ **待实测** | 本文件 §5 |
+| 真实 vLLM 引擎压测（并发 1/4/8/16/32） | ✅ **已实测**（RTX 5070 Ti Laptop 12 GB） | 本文件 §4 |
+| vLLM vs HuggingFace 基线 | ⏳ 待实测 | 本文件 §5 |
 | TP=1 vs TP=2 | ⛔ 主动砍掉 | 本文件 §6 |
-| 容量基线表 | ⏳ **待填** | 本文件 §7 |
+| 容量基线表 | ✅ **已填**（3 次运行取中位数） | 本文件 §7 |
 
-**为什么真实 GPU 数字还没跑**：本机是 Windows + RTX 5070 Ti Laptop（12 GB，运行时已被其他程序占用约 5.2 GB），
-vLLM 不支持 Windows 原生运行，只能走 Linux 容器。Docker daemon 直连 Docker Hub 被网络阻断，
-配置的 4 个镜像加速器在 manifest 阶段返回 `unavailable`；而 Docker 的数据盘在 `I:\DockerData`，**不是 C 盘空间问题**。
-目前的绕过方案是：用本机已有的 CUDA/PyTorch 镜像直接在容器内 `pip install vllm`（容器网络可达 PyPI / HuggingFace），
-不依赖 `docker pull`。换一台 AutoDL 4090（或任何 Linux + NVIDIA 机器）仍是最省事的路径，按 §4 的命令即可补齐。
+**实测环境说明**：§4/§7 的数字在 Windows + **RTX 5070 Ti Laptop（12 GB，sm_120）** 上测得：
+vLLM 0.31.0、torch 2.13.0+cu130、CUDA 13.0、Qwen2.5-1.5B-Instruct（FP16）。
+**这不是 AutoDL 4090**：绝对吞吐会低于 4090，但测量方法、容量推导和结论形态可以直接复用；
+换到 4090 后按 §4.2 的同一条命令重跑即可替换本报告的数字。
 
-**已测的数字是什么**：§3 用的是 `bench/mock_vllm.py`（一个按固定 prefill/per-token 延迟返回
+过程中绕过了两个真实环境问题：Docker daemon 拉取镜像被网络阻断（改用本机已有镜像 +
+容器内 `pip install vllm` + ModelScope 下载模型），以及 FlashInfer 采样器需要 `nvcc` 现场编译
+（镜像只有 CUDA runtime，关闭 FlashInfer 采样）。细节见 `decisions.md` B7/B8。
+
+**关于重复性与干扰**：每组配置独立跑 3 次，报告使用**中位数**（`bench/aggregate.py`），
+并在 §4.3 给出 min/median/max 波动。第一次扫描时有游戏占用 GPU，吞吐只有干净环境的约一半，
+那批数据已全部丢弃——这也说明压测前必须确认 GPU 空闲（`nvidia-smi`，见 decisions.md B7）。
+
+**§3 的数字是什么**：用的是 `bench/mock_vllm.py`（按固定 prefill/per-token 延迟返回
 OpenAI 兼容响应的假引擎）。它验证的是**测量工具与网关链路是否正确**，不是模型性能。
-文件名与标签都带 `mock`，`summarize.py` 默认会把它们过滤掉，避免混进简历数字。
+标签与模型名都带 `mock`，`summarize.py` 默认会把它们过滤掉，避免混进简历数字。
 
 ---
 
 ## 1. 实验环境
 
-### 1.1 目标环境（待实测时填写）
+### 1.1 实测环境（§4 / §7 的数字来自这里）
 
 | 项 | 值 |
 |---|---|
-| GPU | AutoDL RTX 4090 24 GB（单卡） |
-| CPU / 内存 | 待填（`lscpu`、`free -g`） |
-| 模型 | Qwen2.5-7B-Instruct（FP16，约 15 GB） |
-| vLLM | 待填（`python -c "import vllm; print(vllm.__version__)"`） |
-| CUDA / 驱动 | 待填（`nvidia-smi`） |
-| PyTorch | 待填 |
-| 客户端 | 与 vLLM **同机**（必须） |
-| 关键启动参数 | `--gpu-memory-utilization 0.9 --max-model-len 4096 --max-num-seqs 64 --disable-log-requests` |
+| GPU | NVIDIA RTX 5070 Ti Laptop，12 GB，sm_120（**不是 4090**） |
+| CPU / 内存 | Intel Core i9-13900HX / 31.7 GB |
+| 模型 | Qwen2.5-1.5B-Instruct（FP16，safetensors 2.88 GiB） |
+| vLLM | 0.31.0 |
+| PyTorch / CUDA | 2.13.0+cu130 / CUDA 13.0 |
+| 驱动 | 610.47 |
+| 容器 | Ubuntu 22.04 + CUDA runtime（无 nvcc） |
+| 客户端 | 与 vLLM 同机，openai 2.29.0 |
+| 启动参数 | `--gpu-memory-utilization 0.45 --max-model-len 2048 --max-num-seqs 32 --no-enable-log-requests --disable-log-stats` |
+| KV Cache | 63,984 tokens；2048 上下文下最大并发 31.24 |
+| 备注 | 桌面程序占用约 5.2 GB 显存，因此只给 vLLM 0.45 的显存比例 |
 
-### 1.2 本次验证环境（§3 的数字来自这里）
+> 4090 复测：把模型换成 7B，`--gpu-memory-utilization 0.9 --max-model-len 4096`，其余命令不变。
+
+### 1.2 工具链验证环境（§3 的数字来自这里）
 
 | 项 | 值 |
 |---|---|
@@ -168,59 +180,89 @@ QPS 偏高、P99 偏低，且不同并发档位之间不可比。
 
 ---
 
-## 4. 引擎层压测（⏳ 待实测）
+## 4. 引擎层压测（✅ 已实测：RTX 5070 Ti Laptop + Qwen2.5-1.5B）
 
 ### 4.1 实验矩阵
 
 | 实验 | 变量 | 固定 |
 |---|---|---|
-| 并发扫描 | `--concurrency 1,4,16,32` | 输入约 256 token、输出 128、N=100、同机 |
-| 对照 | vLLM vs HF Transformers | 同一组 prompt、同一 `max_tokens` |
+| 并发扫描 | `--concurrency 1,4,8,16,32` | 输入约 200 token、输出 128、N=100、`temperature=0`、同机 |
+| 重复性 | 每组配置独立跑 3 次，取中位数 | 笔记本 GPU 的时钟/温度波动 5–20% |
+| 对照（待做） | vLLM vs HF Transformers | 同一组 prompt、同一 `max_tokens` |
 
-### 4.2 执行命令（在 GPU 机器上）
+### 4.2 执行命令
 
 ```bash
-# 1) 起服务（或 docker compose --profile gpu up -d）
-vllm serve Qwen/Qwen2.5-7B-Instruct \
-  --served-model-name qwen-7b \
-  --gpu-memory-utilization 0.9 \
-  --max-model-len 4096 \
-  --max-num-seqs 64 \
-  --disable-log-requests
+# 本次实测（1.5B / 12 GB 卡）：镜像没有 nvcc，必须关掉 FlashInfer 采样
+VLLM_USE_FLASHINFER_SAMPLER=0 python3 -m vllm.entrypoints.openai.api_server \
+  --model /models/qwen1.5b --served-model-name qwen-1.5b \
+  --gpu-memory-utilization 0.45 --max-model-len 2048 --max-num-seqs 32 \
+  --no-enable-log-requests --disable-log-stats
 
-# 2) 同机压测
+# 同机压测（5 档并发，每档 100 请求）
 python bench/bench_pro.py \
   --base-url http://127.0.0.1:8000 \
-  --model qwen-7b \
-  --concurrency 1,4,16,32 \
+  --model qwen-1.5b \
+  --concurrency 1,4,8,16,32 \
   --num-requests 100 \
   --max-tokens 128 \
-  --label rtx4090-qwen7b \
+  --prompt-chars 400 \
+  --warmup 8 \
+  --label rtx5070ti-qwen1.5b \
   --same-host
 
-# 3) 生成表格（替换本节的占位表）
-python bench/summarize.py --out docs/generated/tables.md
+# 跑 3 次后取中位数（bench/results/repeats/ 下是三次独立运行）
+python bench/aggregate.py \
+  --pattern "bench/results/repeats/rtx5070ti-*.json" \
+  --label rtx5070ti-qwen1.5b-median \
+  --out bench/results/rtx5070ti-qwen1.5b-median.json
 ```
 
-> 压测前一定先 `curl localhost:8000/health` 确认模型加载完成；
-> 每换一个并发档位最好重启一次服务，除非明确只想看稳态混合负载。
+> 压测前先 `curl localhost:8000/health` 确认 `Application startup complete`；
+> **确认 GPU 空闲**（`nvidia-smi` 没有游戏/渲染进程）。本次最初一轮就是在有游戏占用时跑的，
+> 吞吐只有干净环境的一半，已整批丢弃。
 
-### 4.3 结果（待填）
+### 4.3 结果（3 次独立运行的逐档中位数）
 
-| 并发 | QPS | 输出 tok/s | TTFT P50 (s) | TTFT P95 (s) | TTFT P99 (s) | E2E P99 (s) | TPOT P50 (ms) | 错误率 |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | — | — | — | — | — | — | — | — |
-| 4 | — | — | — | — | — | — | — | — |
-| 16 | — | — | — | — | — | — | — | — |
-| 32 | — | — | — | — | — | — | — | — |
+| 并发 | QPS | 输出 tok/s | 总 tok/s | TTFT P50 (s) | TTFT P95 (s) | TTFT P99 (s) | E2E P50 (s) | E2E P99 (s) | TPOT P50 (ms) | 错误率 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2.34 | 114.6 | 730.0 | 0.020 | 0.023 | 0.024 | 0.421 | 0.459 | 8.3 | 0.0% |
+| 4 | 9.67 | 457.2 | 3000.8 | 0.033 | 0.042 | 0.044 | 0.405 | 0.537 | 8.1 | 0.0% |
+| 8 | 18.17 | 836.7 | 5625.0 | 0.043 | 0.077 | 0.084 | 0.407 | 0.528 | 8.2 | 0.0% |
+| 16 | 29.11 | 1363.1 | 9020.2 | 0.066 | 0.078 | 0.080 | 0.496 | 0.628 | 8.9 | 0.0% |
+| 32 | 44.60 | 2110.0 | 13801.0 | 0.108 | 0.125 | 0.128 | 0.600 | 0.807 | 10.9 | 0.0% |
 
-### 4.4 预期趋势与判读方法（先写假设，再用数据验证）
+每档 100/100 成功，0 错误、0 重试。
 
-- **吞吐随并发上升并趋平**：连续批处理把空闲的 GPU 周期填满；趋平点通常是
-  `num_requests_waiting` 开始持续 > 0、`gpu_cache_usage_perc` 接近 1 的位置。
-- **TTFT 上升快于 TPOT**：并发升高时，新请求要排在已有请求的 prefill 之后。
-- **P99 比 P50 更早恶化**：长请求的尾部效应。容量规划看 P99，不看均值。
-- 如果并发 1 时吞吐就明显低于理论值，先查是否**没有预热**或**日志没关**。
+**重复性**（三次独立运行）：
+
+| 并发 | QPS (min/median/max) | 输出 tok/s (min/median/max) | tok/s 波动 | TTFT P99 波动 | E2E P99 波动 |
+|---:|---|---|---:|---:|---:|
+| 1 | 2.30 / 2.34 / 2.43 | 113 / 115 / 119 | 5.6% | 6.6% | 18.8% |
+| 4 | 9.46 / 9.67 / 9.89 | 447 / 457 / 469 | 4.8% | 18.8% | 8.6% |
+| 8 | 14.68 / 18.17 / 18.42 | 680 / 837 / 845 | 19.7% | 15.9% | 45.6% |
+| 16 | 26.78 / 29.11 / 29.90 | 1354 / 1363 / 1441 | 6.4% | 12.3% | 22.7% |
+| 32 | 41.06 / 44.60 / 46.10 | 2070 / 2110 / 2303 | 11.0% | 8.9% | 31.3% |
+
+> 中位数与原始数据都在 `bench/results/`：`rtx5070ti-qwen1.5b-median.json` 是聚合结果，
+> `repeats/` 下是三次独立运行。C=8 的 19.7% 波动是笔记本 GPU 上最明显的一档，
+> 报告取中位数而不是最大值，避免把运气当性能。
+
+![吞吐 vs 并发](figures/throughput-vs-concurrency.png)
+
+![延迟 vs 并发](figures/latency-vs-concurrency.png)
+
+### 4.4 实测结论（对照 4.1 的假设）
+
+- **吞吐随并发近似线性上升，32 并发前没有明显趋平**：输出吞吐 114.6 → 2110 tok/s（18.4×），
+  QPS 2.34 → 44.6（19×）。TPOT 稳定在 8–11 ms，说明连续批处理把 decode 阶段填得很满，
+  单条流的速度几乎没有被同批请求拖慢。
+- **TTFT 上升但仍然很低**：P50 从 20 ms 涨到 108 ms，P99 从 24 ms 涨到 128 ms——远低于 1 s 的 SLO。
+  这是 1.5B 小模型的特征；7B 上 prefill 会明显更重。
+- **E2E P99 始终 < 0.81 s**：即使 32 并发，端到端尾部也远低于 5 s。
+- **32 并发已经顶到 KV Cache 边界**：`--max-model-len 2048` 下 KV Cache 只够 31.24 条并发序列，
+  32 时已有请求排队。继续提高并发不会线性涨吞吐，会先表现在 `num_requests_waiting` 和 TTFT 上。
+- **和"P99 比 P50 更早恶化"一致**：C=32 时 E2E P99/P50 = 0.807/0.600 ≈ 1.35，尾部在拉长。
 
 ---
 
@@ -259,34 +301,40 @@ python bench/summarize.py --out docs/generated/tables.md
 
 ---
 
-## 7. 容量基线（⏳ 待填，这是 SRE 视角的核心产出）
+## 7. 容量基线（✅ 已实测，这是 SRE 视角的核心产出）
 
-### 7.1 模板
+### 7.1 实测结果
 
 | 约束（可接受上限） | 最大可持续并发 | 对应吞吐 (tok/s) | TTFT P99 (s) | E2E P99 (s) | 瓶颈在哪 |
 |---|---:|---:|---:|---:|---|
-| TTFT P99 < 1 s | — | — | — | — | prefill / 排队 |
-| TTFT P99 < 1 s 且 E2E P99 < 5 s | — | — | — | — | KV Cache 容量 |
-| 吞吐优先，不看延迟 | — | — | — | — | 显存 / 调度上限 |
+| TTFT P99 < 1 s | 32 | 2110.0 | 0.128 | 0.807 | 未触顶；KV Cache 上限 31.24 @2048，32 已到边界 |
+| TTFT P99 < 1 s 且 E2E P99 < 5 s | 32 | 2110.0 | 0.128 | 0.807 | 同上 |
+| 吞吐优先，不看延迟 | 32 | 2110.0 | 0.128 | 0.807 | KV Cache / 显存（12 GB，0.45 利用率） |
 
-### 7.2 怎么填
+> 32 是本次测试的最高档位，也正好是 `--max-model-len 2048` 下 KV Cache 能容纳的并发上限（31.24）。
+> 所以结论是"在已测范围内，TTFT P99 < 1 s 的容量至少是 32 并发 / 44.6 QPS / 2110 tok/s"，
+> 而不是"32 是理论上限"——要继续提高，必须降 `max-model-len`、加显存或加副本。
 
-把 §4.3 的 1/4/16/32 四档填进来，找出**仍然满足 SLA 的最大并发**。
-`bench/summarize.py` 会自动做这件事并输出上表（`### 容量基线` 小节），
-逻辑是：对每个约束取满足条件的最大并发档位。
+### 7.2 这张表怎么来的
+
+`bench/summarize.py` 对每个约束取"仍然满足条件的最大并发档位"；
+输入是 1/4/8/16/32 五档、3 次独立运行的中位数（`bench/aggregate.py` 生成）。
 
 ### 7.3 怎么把它变成"需要几张卡"
 
-假设业务目标：峰值 20 QPS、TTFT P99 < 1 s。
+假设业务目标：峰值 100 QPS、TTFT P99 < 1 s、E2E P99 < 5 s。
 
-1. 从基线表读出单实例在 TTFT P99 < 1 s 下的最大 QPS（例如 6 QPS）。
-2. 需要的副本数 = `ceil(20 / 6) = 4`，再留 1 个冗余应对故障 → **5 个实例**。
-3. 用 `vllm:gpu_cache_usage_perc` 复核：若在该并发下已 > 90%，说明瓶颈是 KV Cache，
-   应优先降 `--max-model-len` / `--max-num-seqs`，而不是继续加卡。
+1. 单实例在 TTFT P99 < 1 s 下能扛 **44.6 QPS**（32 并发，1.5B / 12 GB）。
+2. 副本数 = `ceil(100 / 44.6) = 3`，再留 1 个冗余应对故障/发布 → **4 个实例**。
+3. 用 `vllm:gpu_cache_usage_perc` 复核：32 并发时 KV Cache 已到 31.24 的上限，
+   说明瓶颈是显存而不是算力；此时应优先降 `--max-model-len` / `--max-num-seqs`，
+   或换更大显存的卡，而不是继续加并发。
 
-**这就是"输出容量基线"的含义**：不是一句"能扛 16 并发"，而是
-"在 TTFT P99 < 1 s 的约束下，单卡 4090 能扛 N 并发 / M QPS，超出后瓶颈从 prefill 转为 KV Cache，
-按目标 QPS 反推需要 K 张卡"。
+**这就是"输出容量基线"的含义**：不是"能扛 32 并发"，而是
+"在 TTFT P99 < 1 s 的约束下，单卡（12 GB / 1.5B）能扛 32 并发 / 44.6 QPS / 2110 tok/s，
+瓶颈是 KV Cache；按目标 100 QPS 反推需要 3 张卡 + 1 张冗余"。
+
+> 换 7B / 4090 时这些数字都会变，但**推导方法不变**：跑 §4.2，再跑 `summarize.py` 即可。
 
 ---
 
@@ -335,19 +383,21 @@ python bench/summarize.py --out docs/generated/tables.md
 2. 网关的行为是对的：62:62 均衡、故障 2 次探测内摘除、首字节前可重试、
    首字节后不重试、断连取消上游、流式逐块下发。
 3. 网关的代价是可接受的：loopback 下 TTFT P50 增加 < 2 ms，QPS 差异在噪声内。
+4. 引擎层的扩容曲线是对的：1.5B / 12 GB 上，并发 1→32 吞吐 **114.6→2110 tok/s（18.4×）**，
+   TTFT P99 **24→128 ms**，E2E P99 **≤0.807 s**，0 错误；32 并发顶到 KV Cache 边界。
 
 **还没有证明的**：
 
-1. vLLM 在 4090 上的真实吞吐/延迟曲线——需要按 §4 跑一次（约 2–3 小时，租金 20–40 元）。
+1. 4090 / 7B 的绝对数字——本机是 12 GB 笔记本 GPU，吞吐会明显低于 4090。
 2. vLLM 相对 HF 的倍数——需要按 §5 跑一次。
-3. 容量基线表的数字——依赖 1 和 2。
+3. TP=1 vs TP=2（主动砍掉，理由见 §6）。
 
 **下一步（按优先级）**：
 
-1. 租 4090，按 §4 跑 4 档并发 → 填 §4.3 与 §7。
+1. 租 4090，按 §4.2 跑同一套档位 → 替换 §4.3 与 §7 的数字（方法不用改）。
 2. 跑 HF 基线 → 填 §5.2。
 3. 打开 Grafana，压测时截图 → `docs/figures/dashboard.png`。
-4. 把真实数字写回简历与 README 的"30 秒结论"。
+4. 简历引用本报告数字时**必须注明硬件**（RTX 5070 Ti Laptop / 12 GB / 1.5B）。
 
 ---
 
@@ -384,9 +434,12 @@ python bench/bench_pro.py --base-url http://127.0.0.1:9000 --model mock-qwen \
 
 | 文件 | 内容 |
 |---|---|
+| `bench/results/rtx5070ti-qwen1.5b-median.json` | §4.3 / §7 的 3 次运行中位数聚合 |
+| `bench/results/repeats/rtx5070ti-*.json` | 三次独立运行（原始数据） |
 | `bench/results/e2e-gateway-mock-*.json` | §3.1 双后端端到端 |
 | `bench/results/overhead-direct-*.json` | §3.2 直连 |
 | `bench/results/overhead-gateway-*.json` | §3.2 经网关 |
-| `docs/generated/tables.md` | 由 `summarize.py` 生成的全部表格 |
+| `docs/generated/benchmark-tables.md` | 由 `summarize.py` 生成的全部表格 |
+| `docs/figures/*.png` | 吞吐 / 延迟曲线 |
 
 > 所有 `*mock*` 文件都是工具链验证数据，**不得**用于简历中的模型性能表述。

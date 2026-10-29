@@ -19,10 +19,25 @@
 | 压测工具（闭环保压、TTFT/TPOT/P99、容量基线） | ✅ 已实现并验证 | `pytest bench/tests`（14 项）+ mock 端到端 |
 | 端到端联调（2 后端 / 故障摘除 / 指标） | ✅ 已实测 | 120 个流式请求 62/62 均分；杀掉一个后端后 2 次探测内摘除，请求 0 错误 |
 | Prometheus + Grafana + 告警 | ✅ 配置已校验 | `promtool check config` 通过（7 条规则），dashboard JSON 18 个 panel（16 图 + 2 分组） |
-| **vLLM 真实 GPU 压测数字** | ⏳ **待实测** | 本机无可用 vLLM 运行环境，见 [benchmark-report.md](docs/benchmark-report.md#0-当前状态) |
+| **vLLM 真实 GPU 压测**（RTX 5070 Ti Laptop 12 GB / Qwen2.5-1.5B） | ✅ **已实测** | 并发 1→32：吞吐 **114.6→2110 tok/s（18.4×）**，TTFT P99 **24→128 ms**，E2E P99 **≤0.807 s**，0 错误 |
 
-> 这个仓库的诚实原则：**没有实测过的数字一个都不写**。GPU 容量基线表目前是待填状态，
-> 跑完 [benchmark-report.md §4](docs/benchmark-report.md) 的命令后，`make report` 会自动生成表格，不是靠猜。
+> 诚实原则：**没有实测过的数字一个都不写**。每组配置独立跑 3 次取中位数，
+> 原始数据、聚合脚本、图表都在仓库里；4090 / 7B 与 HF 基线仍是 ⏳ 待测，报告里明确标注。
+
+### 实测结果（Qwen2.5-1.5B / 12 GB / vLLM 0.31.0，3 次中位数）
+
+| 并发 | QPS | 输出 tok/s | TTFT P50 | TTFT P99 | E2E P99 | TPOT P50 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 2.34 | 114.6 | 20 ms | 24 ms | 0.459 s | 8.3 ms |
+| 4 | 9.67 | 457.2 | 33 ms | 44 ms | 0.537 s | 8.1 ms |
+| 8 | 18.17 | 836.7 | 43 ms | 84 ms | 0.528 s | 8.2 ms |
+| 16 | 29.11 | 1363.1 | 66 ms | 80 ms | 0.628 s | 8.9 ms |
+| 32 | 44.60 | 2110.0 | 108 ms | 128 ms | 0.807 s | 10.9 ms |
+
+> 32 并发时 KV Cache 已到 2048 上下文的上限（31.24 条序列），继续加并发只会排队。
+> 这是 **12 GB 笔记本 GPU** 的数字，不是 4090；换卡后按 [报告 §4.2](docs/benchmark-report.md) 重跑同一条命令即可替换。
+
+![吞吐 vs 并发](docs/figures/throughput-vs-concurrency.png)
 
 ---
 
@@ -84,8 +99,10 @@ llm-serving-stack/
 │   ├── bench_pro.py              # 闭环保压脚本（TTFT/TPOT/P50/P95/P99/QPS）
 │   ├── mock_vllm.py              # 无 GPU 时可用的假 vLLM（CI / 联调用）
 │   ├── summarize.py              # JSON → Markdown 表格 + 容量基线
+│   ├── aggregate.py              # 多次运行 → 中位数 + 波动（min/median/max）
+│   ├── plot.py                   # JSON → 吞吐/延迟曲线图
 │   ├── requirements.txt
-│   ├── results/                  # 每次压测的原始 JSON（报告的唯一数据源）
+│   ├── results/                  # 压测 JSON（报告的唯一数据源；repeats/ 存原始三次运行）
 │   └── tests/                    # 14 项测试（统计口径 + 端到端）
 ├── gateway/
 │   ├── main.go / config.go       # 入口、配置、优雅退出
@@ -265,8 +282,9 @@ CI（GitHub Actions）跑同样的四组检查，见 `.github/workflows/ci.yml`�
 
 ## 已知限制
 
-- **GPU 数字待实测**：本机没有可用的 vLLM 运行环境（Windows + 显存/磁盘受限）。
-  报告中的容量基线表是待填模板，填表命令已给出。
+- **4090 / 7B 与 HF 基线未测**：本报告数字来自 RTX 5070 Ti Laptop（12 GB）+ Qwen2.5-1.5B，
+  绝对吞吐会低于 4090；测量方法已固化，换卡重跑同一条命令即可替换。
+- 压测在笔记本 GPU 上做，run-to-run 波动 5–20%（报告里给了 min/median/max）；服务器卡会稳得多。
 - 后端列表不支持热加载，改配置需重启（重启会重新探测健康状态，几秒内恢复）。
 - 限流是进程级全局令牌桶，不是按租户/按模型。
 - 未做 prefill/decode 分离、按 KV Cache 利用率路由（属于 vLLM Router 的方向）。
@@ -277,10 +295,12 @@ CI（GitHub Actions）跑同样的四组检查，见 `.github/workflows/ci.yml`�
 ## 面试口径（背这段）
 
 > "我做了两层：引擎层用 vLLM 部署 OpenAI 兼容服务，用闭环保压量化 TTFT、TPOT、P99 和吞吐，
-> 并压出容量基线——也就是在 TTFT P99 < 1s 的约束下最多能扛多少并发、瓶颈在 prefill 还是
-> KV Cache。接入层用 Go 写了一个多实例网关，做健康检查与软摘除、最少连接负载均衡、
-> SSE 逐块透传，以及只在首字节之前发生的重试。踩过的坑里最能讲的是两个：
-> 最少连接在平局时会全打第一台，以及流式响应如果先提交响应头就没法重试。"
+> 并压出容量基线——在 12 GB 卡 + 1.5B 上，并发 1→32 吞吐从 114 涨到 2110 tok/s，
+> TTFT P99 从 24 ms 涨到 128 ms，32 并发时 KV Cache 到达上限、瓶颈从算力转成显存。
+> 接入层用 Go 写了一个多实例网关，做健康检查与软摘除、最少连接负载均衡、
+> SSE 逐块透传，以及只在首字节之前发生的重试。踩过的坑里最能讲的是三个：
+> 最少连接在平局时会全打第一台（实测 83:41）、流式响应如果先提交响应头就没法重试、
+> 以及压测时如果后台有游戏占 GPU，吞吐会直接腰斩——所以每组数据都跑 3 次取中位数。"
 
 ---
 

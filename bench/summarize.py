@@ -39,7 +39,11 @@ def load_runs(results_dir: Path, include_mock: bool) -> list[Run]:
             print(f"skip unreadable {path}", file=sys.stderr)
             continue
         label = str(doc.get("label", path.stem))
-        if "mock" in label.lower() and not include_mock:
+        model = str(doc.get("model", ""))
+        # Mock runs are harness-validation data; keep them out of the report
+        # unless explicitly requested. Check both label and model: the overhead
+        # runs are labelled "overhead-*" but served by the mock engine.
+        if not include_mock and ("mock" in label.lower() or "mock" in model.lower()):
             continue
         runs.append(
             Run(
