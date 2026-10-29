@@ -25,9 +25,9 @@ services:
     profiles: ["gpu"]
     command:
       - --model
-      - ${MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      - ${MODEL:-Qwen/Qwen2.5-1.5B-Instruct}
       - --served-model-name
-      - ${SERVED_MODEL_NAME:-qwen}
+      - ${SERVED_MODEL_NAME:-qwen-1.5b}
       - --host
       - 0.0.0.0
       - --port
@@ -35,12 +35,13 @@ services:
       - --dtype
       - auto
       - --gpu-memory-utilization
-      - ${GPU_MEMORY_UTILIZATION:-0.9}
+      - ${GPU_MEMORY_UTILIZATION:-0.45}
       - --max-model-len
-      - ${MAX_MODEL_LEN:-4096}
+      - ${MAX_MODEL_LEN:-2048}
       - --max-num-seqs
-      - ${MAX_NUM_SEQS:-64}
-      - --disable-log-requests
+      - ${MAX_NUM_SEQS:-32}
+      # vLLM >= 0.31 renamed --disable-log-requests to --no-enable-log-requests.
+      - --no-enable-log-requests
     environment:
       HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
       HF_TOKEN: ${HF_TOKEN:-}

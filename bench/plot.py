@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plot benchmark results as PNGs (no GPU needed, no display needed).
 
-    python bench/plot.py --results bench/results/rtx4090-*.json --out docs/figures
+    python bench/plot.py --results bench/results/rtx5070ti-*.json --out docs/figures
 
 Produces:
     latency-vs-concurrency.png   TTFT P95 and E2E P99 per level

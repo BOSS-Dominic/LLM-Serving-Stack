@@ -20,8 +20,8 @@
 
 **实测环境说明**：§4/§7 的数字在 Windows + **RTX 5070 Ti Laptop（12 GB，sm_120）** 上测得：
 vLLM 0.31.0、torch 2.13.0+cu130、CUDA 13.0、Qwen2.5-1.5B-Instruct（FP16）。
-**这不是 AutoDL 4090**：绝对吞吐会低于 4090，但测量方法、容量推导和结论形态可以直接复用；
-换到 4090 后按 §4.2 的同一条命令重跑即可替换本报告的数字。
+换到显存更大的机器（例如 24 GB 跑 7B）时，按 §4.2 的同一条命令重跑即可替换本报告的数字；
+测量方法与容量推导不变。
 
 过程中绕过了两个真实环境问题：Docker daemon 拉取镜像被网络阻断（改用本机已有镜像 +
 容器内 `pip install vllm` + ModelScope 下载模型），以及 FlashInfer 采样器需要 `nvcc` 现场编译
@@ -33,7 +33,7 @@ vLLM 0.31.0、torch 2.13.0+cu130、CUDA 13.0、Qwen2.5-1.5B-Instruct（FP16）�
 
 **§3 的数字是什么**：用的是 `bench/mock_vllm.py`（按固定 prefill/per-token 延迟返回
 OpenAI 兼容响应的假引擎）。它验证的是**测量工具与网关链路是否正确**，不是模型性能。
-标签与模型名都带 `mock`，`summarize.py` 默认会把它们过滤掉，避免混进简历数字。
+标签与模型名都带 `mock`，`summarize.py` 默认会把它们过滤掉，避免和真实引擎数据混在一起。
 
 ---
 
@@ -43,7 +43,7 @@ OpenAI 兼容响应的假引擎）。它验证的是**测量工具与网关链�
 
 | 项 | 值 |
 |---|---|
-| GPU | NVIDIA RTX 5070 Ti Laptop，12 GB，sm_120（**不是 4090**） |
+| GPU | NVIDIA RTX 5070 Ti Laptop，12 GB，sm_120 |
 | CPU / 内存 | Intel Core i9-13900HX / 31.7 GB |
 | 模型 | Qwen2.5-1.5B-Instruct（FP16，safetensors 2.88 GiB） |
 | vLLM | 0.31.0 |
@@ -55,7 +55,7 @@ OpenAI 兼容响应的假引擎）。它验证的是**测量工具与网关链�
 | KV Cache | 63,984 tokens；2048 上下文下最大并发 31.24 |
 | 备注 | 桌面程序占用约 5.2 GB 显存，因此只给 vLLM 0.45 的显存比例 |
 
-> 4090 复测：把模型换成 7B，`--gpu-memory-utilization 0.9 --max-model-len 4096`，其余命令不变。
+> 换更大显存的 GPU 复测 7B 时：`--gpu-memory-utilization 0.9 --max-model-len 4096`，其余命令不变。
 
 ### 1.2 工具链验证环境（§3 的数字来自这里）
 
@@ -123,7 +123,7 @@ QPS 偏高、P99 偏低，且不同并发档位之间不可比。
 | mock 引擎的延迟是 `time.sleep` | **Windows 定时器粒度 15.5 ms**，把设计的 2 ms/token 放大成 16 ms | §3 的 TPOT 只能看趋势，不能当模型性能；真实 GPU 上不存在 |
 | loopback + Python mock | 网关开销被低估/噪声放大 | §3.2 只用于判断"网关没有引入数量级开销" |
 | Python GIL + 线程 mock | 高并发下 mock 自身先饱和 | 并发档位最多到 8；真实引擎用 16/32 |
-| 共享 GPU（笔记本） | 真实 GPU 数字会受其他进程影响 | 未用于任何结论；AutoDL 独占实例 |
+| 共享 GPU（笔记本） | 真实 GPU 数字会受其他进程影响 | 采集前确认 GPU 空闲；每组配置跑 3 次取中位数（见 decisions.md B7） |
 | 系统代理 / VPN | 静默污染延迟 | 客户端强制 `trust_env=False` |
 
 ---
@@ -293,9 +293,9 @@ python bench/aggregate.py \
 
 ## 6. TP=1 vs TP=2：未做，原因如下
 
-- 7B 在 24 GB 单卡上放得下，TP=2 的跨卡 AllReduce 通信开销大概率大于切分收益，
-  预期结论是"没有更快"——这个结论对面试的说服力很低。
-- 需要双倍租金（2×4090），而同样的预算用于 HF 基线对比能产出更有价值的倍数结论。
+- 7B FP16 在 12 GB 单卡上放不下；做 TP=2 需要双卡机器，本机不具备。
+- 即便有多卡，小模型 TP=2 的跨卡 AllReduce 通信开销通常大于切分收益，结论大概率是"没有更快"，
+  对容量规划的参考价值低；同样的时间用于 HF 基线对比更有价值。
 - 如果目标岗位明确做多卡推理/国产算力，再补这一节；届时应记录：
   `--tensor-parallel-size 2` 下的 tok/s、TTFT，以及是否出现通信瓶颈。
 
@@ -334,7 +334,7 @@ python bench/aggregate.py \
 "在 TTFT P99 < 1 s 的约束下，单卡（12 GB / 1.5B）能扛 32 并发 / 44.6 QPS / 2110 tok/s，
 瓶颈是 KV Cache；按目标 100 QPS 反推需要 3 张卡 + 1 张冗余"。
 
-> 换 7B / 4090 时这些数字都会变，但**推导方法不变**：跑 §4.2，再跑 `summarize.py` 即可。
+> 换 7B 或更大显存时这些数字都会变，但**推导方法不变**：跑 §4.2，再跑 `summarize.py` 即可。
 
 ---
 
@@ -388,16 +388,16 @@ python bench/aggregate.py \
 
 **还没有证明的**：
 
-1. 4090 / 7B 的绝对数字——本机是 12 GB 笔记本 GPU，吞吐会明显低于 4090。
+1. 7B 的绝对数字——12 GB 显存放不下 7B FP16，需要 ≥24 GB 的卡。
 2. vLLM 相对 HF 的倍数——需要按 §5 跑一次。
 3. TP=1 vs TP=2（主动砍掉，理由见 §6）。
 
 **下一步（按优先级）**：
 
-1. 租 4090，按 §4.2 跑同一套档位 → 替换 §4.3 与 §7 的数字（方法不用改）。
+1. 换 ≥24 GB 显存的 GPU，按 §4.2 跑 7B → 替换 §4.3 与 §7 的数字（方法不用改）。
 2. 跑 HF 基线 → 填 §5.2。
 3. 打开 Grafana，压测时截图 → `docs/figures/dashboard.png`。
-4. 简历引用本报告数字时**必须注明硬件**（RTX 5070 Ti Laptop / 12 GB / 1.5B）。
+4. 对外引用本报告数字时注明硬件（RTX 5070 Ti Laptop / 12 GB / 1.5B）。
 
 ---
 
@@ -442,4 +442,4 @@ python bench/bench_pro.py --base-url http://127.0.0.1:9000 --model mock-qwen \
 | `docs/generated/benchmark-tables.md` | 由 `summarize.py` 生成的全部表格 |
 | `docs/figures/*.png` | 吞吐 / 延迟曲线 |
 
-> 所有 `*mock*` 文件都是工具链验证数据，**不得**用于简历中的模型性能表述。
+> 所有 `*mock*` 文件都是工具链验证数据，**不得**当作真实模型性能数据。
