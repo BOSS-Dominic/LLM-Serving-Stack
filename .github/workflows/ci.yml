@@ -89,10 +89,12 @@ jobs:
 
       - name: validate prometheus config and alert rules
         run: |
-          docker run --rm \
+          # The prom/prometheus image entrypoint is /bin/prometheus; promtool
+          # must be selected explicitly or the container tries to run it as a flag.
+          docker run --rm --entrypoint promtool \
             -v "$PWD/deploy/prometheus:/etc/prometheus:ro" \
             prom/prometheus:v2.55.1 \
-            promtool check config /etc/prometheus/prometheus.yml
+            check config /etc/prometheus/prometheus.yml
 
       - name: validate grafana dashboard JSON
         run: |
