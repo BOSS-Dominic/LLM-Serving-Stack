@@ -1,5 +1,8 @@
 # llm-serving-stack
 
+[![ci](https://github.com/BOSS-Dominic/LLM-Serving-Stack/actions/workflows/ci.yml/badge.svg)](https://github.com/BOSS-Dominic/LLM-Serving-Stack/actions/workflows/ci.yml)
+[![repo](https://img.shields.io/badge/github-BOSS--Dominic%2FLLM--Serving--Stack-181717?logo=github)](https://github.com/BOSS-Dominic/LLM-Serving-Stack)
+
 > vLLM 推理服务部署 + 并发压测 + Go 多实例网关 + Prometheus/Grafana 全链路可观测
 
 把「一个大模型怎么在线上跑得稳」拆成可验证的两层：**引擎层**（vLLM 的单机吞吐与延迟）和
