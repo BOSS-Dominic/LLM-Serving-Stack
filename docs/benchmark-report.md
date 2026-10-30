@@ -8,8 +8,9 @@
 
 - **Hardware**: RTX 5070 Ti Laptop (12 GB, sm_120), Qwen2.5-1.5B-Instruct FP16, vLLM 0.31.0,
   torch 2.13.0+cu130, CUDA 13.0, driver 610.47.
-- **Method**: closed-loop sweep at concurrency 1/4/8/16/32, 100 requests per level, fixed 128 output
-  tokens, temperature 0, three independent runs; per-level medians are reported.
+- **Method**: closed-loop sweep at concurrency 1/4/8/16/32, 100 requests per level, `max_tokens=128`
+  as a cap (actual completions ≈ 47–50 tokens), temperature 0, three independent runs; per-level
+  medians are reported.
 - **Results**: 114.6 → 2110 output tok/s (18.4×), 2.34 → 44.6 QPS; TTFT P99 24 → 128 ms;
   E2E P99 ≤ 807 ms; 0 errors out of 500 requests.
 - **Capacity baseline**: with TTFT P99 < 1 s and E2E P99 < 5 s, one 12 GB card sustains
@@ -113,7 +114,7 @@ QPS 偏高、P99 偏低，且不同并发档位之间不可比。
 
 | 变量 | 设置 | 原因 |
 |---|---|---|
-| 输出长度 | `max_tokens=128` | 输出长度不同，tok/s 无可比性 |
+| 输出长度 | `max_tokens=128`（上限；实际约 47–50 token） | 输出长度不同，tok/s 无可比性 |
 | 采样 | `temperature=0` | 避免随机停止导致长度漂移 |
 | 每档请求数 | 100（≥50） | 分位数在 n<50 时不可信 |
 | 预热 | 4 个请求，丢弃 | 首批请求在编译 kernel / 加载权重 |
@@ -205,7 +206,7 @@ QPS 偏高、P99 偏低，且不同并发档位之间不可比。
 
 | 实验 | 变量 | 固定 |
 |---|---|---|
-| 并发扫描 | `--concurrency 1,4,8,16,32` | 输入约 200 token、输出 128、N=100、`temperature=0`、同机 |
+| 并发扫描 | `--concurrency 1,4,8,16,32` | 输入约 263 token、`max_tokens=128`（实际约 47–50）、N=100、`temperature=0`、同机 |
 | 重复性 | 每组配置独立跑 3 次，取中位数 | 笔记本 GPU 的时钟/温度波动 5–20% |
 | 对照（待做） | vLLM vs HF Transformers | 同一组 prompt、同一 `max_tokens` |
 
@@ -252,6 +253,11 @@ python bench/aggregate.py \
 | 32 | 44.60 | 2110.0 | 13801.0 | 0.108 | 0.125 | 0.128 | 0.600 | 0.807 | 10.9 | 0.0% |
 
 每档 100/100 成功，0 错误、0 重试。
+
+> **实际输出长度约 46–50 token，不是 128。** `max_tokens=128` 只是上限：prompt 要求
+> “用一句话总结”，`temperature=0` 下模型稳定地在一句话后停止。所以这里的 tok/s 描述的是
+> “263 token 输入 + 约 48 token 输出”这个固定负载；如果换成要求长输出的 prompt，
+> 吞吐与 TPOT 都会变。
 
 **重复性**（三次独立运行）：
 

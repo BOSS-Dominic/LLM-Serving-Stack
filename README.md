@@ -20,7 +20,9 @@ Every number in this repository is produced by scripts under `bench/`. Nothing i
 ## Results at a glance
 
 Measured on an RTX 5070 Ti Laptop (12 GB) with Qwen2.5-1.5B-Instruct and vLLM 0.31.0.
-Each level is the median of 3 independent runs; 100 requests per level, `max_tokens=128`, temperature 0.
+Each level is the median of 3 independent runs; 100 requests per level, `max_tokens=128` (cap —
+actual completions were ≈ 47–50 tokens because the prompt asks for a one-sentence summary),
+temperature 0.
 
 | Concurrency | QPS | Output tok/s | TTFT P50 | TTFT P99 | E2E P99 | TPOT P50 |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -229,7 +231,8 @@ Detailed docs are primarily written in Chinese; each starts with an English summ
 ## 实测结果
 
 环境：RTX 5070 Ti Laptop（12 GB）+ Qwen2.5-1.5B-Instruct + vLLM 0.31.0。
-每档 100 请求、`max_tokens=128`、temperature 0，取 3 次独立运行的中位数。
+每档 100 请求、`max_tokens=128`（这是上限，实际完成约 47–50 token——prompt 要求“一句话总结”，
+模型会提前停止）、temperature 0，取 3 次独立运行的中位数。
 
 | 并发 | QPS | 输出 tok/s | TTFT P50 | TTFT P99 | E2E P99 | TPOT P50 |
 |---:|---:|---:|---:|---:|---:|---:|
