@@ -3,6 +3,53 @@
 > 这份文件回答的是技术评审里最难的一类问题：**"你为什么不用 X？"**
 > 每条都写清楚：当时的约束、选了什么、放弃了什么、代价是什么、有没有证据。
 
+## English summary
+
+Condensed list; the Chinese body has the full context, rejected alternatives and evidence.
+
+**Gateway**
+
+- Go standard library (+ Prometheus client) instead of FastAPI/nginx/Envoy: SSE pass-through, retry
+  boundaries and health semantics are the point of the project, not the framework.
+- Default `least_conn` (smooth weighted `round_robin` available): LLM request cost varies by an order
+  of magnitude, so equal request counts do not mean equal work.
+- Selection and the in-flight increment share one short mutex; CAS or pre-increment alternatives were
+  rejected as harder to reason about at this request rate.
+- Ties are broken by lifetime assignment count: strict `<` sent every low-concurrency request to the
+  first backend (observed 83:41; fixed to 62:62).
+- Health checks are active probes with consecutive-failure thresholds; removal is soft, in-flight
+  requests finish normally.
+- Probes open fresh connections, because keep-alive can mask an instance that stopped accepting new ones.
+- SSE response headers are committed only after the first chunk, so a prefill-time failure is retryable.
+- No retry after the first byte reaches the client: replaying a partially delivered generation is
+  always wrong.
+- Timeouts are split (5 s connect, 30 s first byte for streams, 60 s total for non-streams);
+  `http.Client.Timeout` stays 0.
+- Request bodies are buffered (8 MiB cap) so retries never carry an empty body.
+- Non-streaming responses are buffered (4 MiB cap) so a truncated 200 can be retried; streams are never
+  buffered.
+- Rate limiting is a single process-wide token bucket, explicitly not distributed.
+
+**Benchmarking**
+
+- Closed-loop concurrency instead of `gather(N)`, which measures batch drain time rather than sustained
+  throughput.
+- Percentiles use linear interpolation (`numpy.percentile` definition); the naive index formula reports
+  P75 for four samples.
+- Benchmark clients set `trust_env=False`: a system proxy hijacked `127.0.0.1` on the test machine.
+- Results are written to JSON and tables are generated, never copied by hand.
+- Three runs per configuration, median reported. A background game halved throughput in one batch; that
+  batch was discarded and the run was repeated on an idle GPU.
+- TP=2 and SGLang comparisons were cut deliberately: 12 GB cannot hold 7B FP16, and the expected
+  "no speedup" result is low-value for this setup.
+- Mock-engine results verify the toolchain only, never model performance.
+- vLLM 0.31 renamed `--disable-log-requests`; images without `nvcc` need
+  `VLLM_USE_FLASHINFER_SAMPLER=0`.
+
+**Observability**
+
+- Pull-based Prometheus, native `vllm:*` metric names, and a dedicated registry for gateway collectors.
+
 ---
 
 ## A. 网关

@@ -4,6 +4,25 @@
 > 本文件中的每个数字都来自 `bench/results/*.json`，表格由 `bench/summarize.py` 生成。
 > **未实测的格子写"—"，不写估计值。**
 
+## English summary
+
+- **Hardware**: RTX 5070 Ti Laptop (12 GB, sm_120), Qwen2.5-1.5B-Instruct FP16, vLLM 0.31.0,
+  torch 2.13.0+cu130, CUDA 13.0, driver 610.47.
+- **Method**: closed-loop sweep at concurrency 1/4/8/16/32, 100 requests per level, fixed 128 output
+  tokens, temperature 0, three independent runs; per-level medians are reported.
+- **Results**: 114.6 → 2110 output tok/s (18.4×), 2.34 → 44.6 QPS; TTFT P99 24 → 128 ms;
+  E2E P99 ≤ 807 ms; 0 errors out of 500 requests.
+- **Capacity baseline**: with TTFT P99 < 1 s and E2E P99 < 5 s, one 12 GB card sustains
+  32 concurrent requests / 44.6 QPS / 2110 tok/s. The binding limit is the KV cache
+  (31.24 sequences at 2048 context), not compute.
+- **Gateway overhead** (mock engine, loopback): < 2 ms on TTFT P50, QPS within ±1%, P99 tail +3–8 ms.
+- **Harness validation** (mock engine, not model performance): 62/62 request split across two backends;
+  a dead backend is removed after two failed probes while requests keep succeeding.
+- **Pending**: 7B numbers (needs ≥24 GB VRAM) and the HuggingFace baseline.
+
+The sections below are in Chinese and contain the full method, control variables, tables and
+reproduction commands.
+
 ---
 
 ## 0. 当前状态

@@ -3,6 +3,23 @@
 一个只依赖标准库 + Prometheus client 的 OpenAI 兼容网关，放在多个 vLLM 实例前面，
 负责健康检查、负载均衡、SSE 流式透传、失败重试和指标暴露。
 
+## English summary
+
+An OpenAI-compatible reverse proxy for multiple vLLM instances: ~900 lines of Go plus the Prometheus
+client, no web framework.
+
+- Endpoints: `/*` (proxied), `/healthz`, `/readyz`, `/debug/backends`, `/metrics`.
+- Balancing: `least_conn` (default) or smooth weighted `round_robin`; selection and the in-flight
+  increment are atomic.
+- Streaming: SSE is flushed chunk by chunk; response headers are committed only after the first chunk.
+- Retries: only before the first byte, 5xx/connection errors only, jittered backoff, per-attempt exclusion.
+- Timeouts: 5 s connect, 30 s first byte for streams, 60 s total for non-streams; no global client timeout.
+- Health: active `/health` probing, 2 consecutive failures to remove, 2 successes to restore, soft removal.
+- Tests: `go test -race ./...` covers retries, streaming, disconnects, timeouts, balancing and config
+  validation.
+
+The sections below are in Chinese.
+
 ```
 client ──▶ gateway :9000 ──┬──▶ vllm-1 :8000
                            └──▶ vllm-2 :8000
